@@ -102,7 +102,7 @@ if __name__ == '__main__':
     model = GPT(config.model)
 
     # construct the trainer object
-    trainer = Trainer(config.trainer, model, train_dataset)
+    trainer = Trainer(config.trainer, model, train_dataset, run_config=config.to_dict())
 
     # iteration callback
     def batch_end_callback(trainer):

@@ -139,7 +139,7 @@ if __name__ == '__main__':
     model = GPT(config.model)
 
     # construct the trainer object
-    trainer = Trainer(config.trainer, model, train_dataset)
+    trainer = Trainer(config.trainer, model, train_dataset, run_config=config.to_dict())
 
     # helper function for the evaluation of a model
     def eval_split(trainer, split, max_batches=None):
