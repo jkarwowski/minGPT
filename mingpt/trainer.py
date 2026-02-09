@@ -290,6 +290,11 @@ class Trainer:
         if name == 'cosine':
             coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
             return min_lr + coeff * (config.learning_rate - min_lr)
+        if name == 'exp':
+            if min_lr <= 0.0:
+                raise ValueError("exp lr_schedule requires min_lr > 0")
+            ratio = min_lr / config.learning_rate
+            return config.learning_rate * (ratio ** decay_ratio)
 
         raise ValueError(f"unknown lr_schedule.name {name!r}")
 
