@@ -13,6 +13,12 @@ class BaseConfig:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def merge_from_dict(self, values: dict[str, Any]) -> None:
+        for key, value in values.items():
+            if not hasattr(self, key):
+                raise KeyError(f"{self.__class__.__name__} has no field {key!r}")
+            setattr(self, key, value)
+
 
 @dataclass
 class SystemConfig(BaseConfig):
