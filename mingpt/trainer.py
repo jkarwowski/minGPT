@@ -31,6 +31,11 @@ class Trainer:
         C.eval_interval = 500
         C.eval_batches = None
         C.eval_batch_size = None
+        # auto batch size search
+        C.auto_batch_size = False
+        C.auto_batch_size_start = None
+        C.auto_batch_size_factor = 2
+        C.auto_batch_size_max = 4096
         # wandb logging
         C.wandb = CN()
         C.wandb.enabled = True
@@ -114,6 +119,92 @@ class Trainer:
             step = self.iter_num
         self.wandb.log(metrics, step=step)
 
+    def _batch_fits(self, batch_size):
+        model, config = self.model, self.config
+        pin_memory = self.device == 'cuda'
+        loader = DataLoader(
+            self.train_dataset,
+            shuffle=False,
+            pin_memory=pin_memory,
+            batch_size=batch_size,
+            num_workers=0,
+        )
+        try:
+            batch = next(iter(loader))
+            batch = [t.to(self.device) for t in batch]
+            x, y = batch
+            model.zero_grad(set_to_none=True)
+            _, loss = model(x, y)
+            loss.backward()
+            model.zero_grad(set_to_none=True)
+            return True
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if (
+                'out of memory' in msg
+                or 'cublas_status_alloc_failed' in msg
+                or 'cuda error' in msg and 'memory' in msg
+            ):
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return False
+            raise
+
+    def find_max_batch_size(self):
+        config = self.config
+        try:
+            dataset_size = len(self.train_dataset)
+        except TypeError:
+            dataset_size = None
+
+        max_bs = config.auto_batch_size_max
+        if dataset_size is not None:
+            max_bs = min(max_bs, dataset_size) if max_bs is not None else dataset_size
+        if max_bs is None:
+            max_bs = config.batch_size
+
+        if max_bs < 1:
+            raise ValueError("auto_batch_size_max must be >= 1")
+
+        factor = max(2, int(config.auto_batch_size_factor or 2))
+        start = config.auto_batch_size_start or config.batch_size or 1
+        start = max(1, int(start))
+        if max_bs is not None:
+            start = min(start, max_bs)
+
+        fits_cache = {}
+
+        def fits(bs):
+            if bs not in fits_cache:
+                fits_cache[bs] = self._batch_fits(bs)
+            return fits_cache[bs]
+
+        bs = start
+        if not fits(bs):
+            while bs > 1 and not fits(bs):
+                bs = max(1, bs // factor)
+            if not fits(bs):
+                raise RuntimeError("No viable batch size found (even 1 does not fit).")
+
+        next_bs = min(max_bs, bs * factor)
+        while next_bs <= max_bs and fits(next_bs):
+            bs = next_bs
+            next_bs = min(max_bs, bs * factor)
+            if next_bs == bs:
+                break
+
+        low = bs + 1
+        high = min(max_bs, next_bs - 1)
+        while low <= high:
+            mid = (low + high) // 2
+            if fits(mid):
+                bs = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        return bs
+
     def evaluate(self):
         if self.val_dataset is None:
             return None
@@ -177,6 +268,12 @@ class Trainer:
 
         # setup the optimizer
         self.optimizer = model.configure_optimizers(config)
+
+        if config.auto_batch_size:
+            max_bs = self.find_max_batch_size()
+            config.batch_size = max_bs
+            print(f"auto batch size set to {max_bs}")
+            self.log_metrics({'train/auto_batch_size': int(max_bs)}, step=0)
 
         # setup the dataloader
         train_loader = DataLoader(
