@@ -2,9 +2,8 @@
 Trains a GPT to add n-digit numbers.
 """
 
+import argparse
 import os
-import sys
-import json
 
 import torch
 from torch.utils.data import Dataset
@@ -12,32 +11,15 @@ from torch.utils.data.dataloader import DataLoader
 
 from mingpt.model import GPT
 from mingpt.trainer import Trainer
-from mingpt.utils import set_seed, setup_logging, CfgNode as CN
+from mingpt.utils import set_seed, setup_logging
+from mingpt.configs import AdderConfig, load_config
 
 # -----------------------------------------------------------------------------
-
-def get_config():
-
-    C = CN()
-
-    # system
-    C.system = CN()
-    C.system.seed = 3407
-    C.system.work_dir = './out/adder'
-
-    # data
-    C.data = AdditionDataset.get_default_config()
-
-    # model
-    C.model = GPT.get_default_config()
-    C.model.model_type = 'gpt-nano'
-
-    # trainer
-    C.trainer = Trainer.get_default_config()
-    C.trainer.learning_rate = 5e-4 # the model we're using is so small that we can go a bit faster
-    C.trainer.eval_interval = 500
-
-    return C
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train GPT to add n-digit numbers.")
+    parser.add_argument("--config", default="configs/adder.yaml", help="Path to YAML config.")
+    parser.add_argument("--set", action="append", default=[], help="Override config values, e.g. trainer.batch_size=128")
+    return parser.parse_args()
 
 # -----------------------------------------------------------------------------
 
@@ -65,12 +47,6 @@ class AdditionDataset(Dataset):
     and hoping that the GPT model completes the sequence with the next (n+1) digits
     correctly.
     """
-
-    @staticmethod
-    def get_default_config():
-        C = CN()
-        C.ndigit = 2
-        return C
 
     def __init__(self, config, split):
         self.config = config
@@ -123,9 +99,8 @@ class AdditionDataset(Dataset):
 
 if __name__ == '__main__':
 
-    # get default config and overrides from the command line, if any
-    config = get_config()
-    config.merge_from_args(sys.argv[1:])
+    args = parse_args()
+    config = load_config(args.config, AdderConfig, overrides=args.set)
     print(config)
     setup_logging(config)
     set_seed(config.system.seed)

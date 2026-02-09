@@ -2,8 +2,8 @@
 Trains a character-level language model.
 """
 
+import argparse
 import os
-import sys
 
 import torch
 from torch.utils.data import Dataset
@@ -11,33 +11,15 @@ from torch.utils.data.dataloader import DataLoader
 
 from mingpt.model import GPT
 from mingpt.trainer import Trainer
-from mingpt.utils import set_seed, setup_logging, CfgNode as CN
+from mingpt.utils import set_seed, setup_logging
+from mingpt.configs import CharGPTConfig, load_config
 
 # -----------------------------------------------------------------------------
-
-def get_config():
-
-    C = CN()
-
-    # system
-    C.system = CN()
-    C.system.seed = 3407
-    C.system.work_dir = './out/chargpt'
-
-    # data
-    C.data = CharDataset.get_default_config()
-
-    # model
-    C.model = GPT.get_default_config()
-    C.model.model_type = 'gpt-mini'
-
-    # trainer
-    C.trainer = Trainer.get_default_config()
-    C.trainer.learning_rate = 5e-4 # the model we're using is so small that we can go a bit faster
-    C.trainer.eval_interval = 500
-    C.trainer.eval_batches = 10
-
-    return C
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train a character-level language model.")
+    parser.add_argument("--config", default="configs/chargpt.yaml", help="Path to YAML config.")
+    parser.add_argument("--set", action="append", default=[], help="Override config values, e.g. trainer.batch_size=128")
+    return parser.parse_args()
 
 # -----------------------------------------------------------------------------
 
@@ -45,12 +27,6 @@ class CharDataset(Dataset):
     """
     Emits batches of characters
     """
-
-    @staticmethod
-    def get_default_config():
-        C = CN()
-        C.block_size = 128
-        return C
 
     def __init__(self, config, data, vocab=None):
         self.config = config
@@ -95,16 +71,15 @@ class CharDataset(Dataset):
 
 if __name__ == '__main__':
 
-    # get default config and overrides from the command line, if any
-    config = get_config()
-    config.merge_from_args(sys.argv[1:])
+    args = parse_args()
+    config = load_config(args.config, CharGPTConfig, overrides=args.set)
     print(config)
     setup_logging(config)
     set_seed(config.system.seed)
 
     # construct the training and validation datasets
-    text = open('input.txt', 'r').read() # don't worry we won't run out of file handles
-    split = int(0.9 * len(text))
+    text = open(config.data.input_path, 'r').read() # don't worry we won't run out of file handles
+    split = int(config.data.train_split * len(text))
     train_text = text[:split]
     val_text = text[split:]
     chars = sorted(list(set(text)))

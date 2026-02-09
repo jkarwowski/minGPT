@@ -36,6 +36,12 @@ class Trainer:
         C.auto_batch_size_start = None
         C.auto_batch_size_factor = 2
         C.auto_batch_size_max = 4096
+        # lr schedule
+        C.lr_schedule = CN()
+        C.lr_schedule.name = 'constant'
+        C.lr_schedule.warmup_iters = 0
+        C.lr_schedule.max_iters = 0
+        C.lr_schedule.min_lr = 0.0
         # wandb logging
         C.wandb = CN()
         C.wandb.enabled = True
@@ -253,6 +259,40 @@ class Trainer:
             'val/ppl': ppl,
         }
 
+    def _get_lr(self, it):
+        config = self.config
+        schedule = getattr(config, 'lr_schedule', None)
+        if schedule is None:
+            return self.optimizer.param_groups[0]['lr']
+
+        name = schedule.name
+        if name == 'constant':
+            return config.learning_rate
+
+        warmup = schedule.warmup_iters
+        max_iters = schedule.max_iters
+        min_lr = schedule.min_lr
+
+        if warmup > 0 and it < warmup:
+            return config.learning_rate * (it + 1) / warmup
+
+        if max_iters <= warmup:
+            return config.learning_rate
+
+        if it > max_iters:
+            return min_lr
+
+        decay_ratio = (it - warmup) / (max_iters - warmup)
+        decay_ratio = min(max(decay_ratio, 0.0), 1.0)
+
+        if name == 'linear':
+            return min_lr + (1.0 - decay_ratio) * (config.learning_rate - min_lr)
+        if name == 'cosine':
+            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+            return min_lr + coeff * (config.learning_rate - min_lr)
+
+        raise ValueError(f"unknown lr_schedule.name {name!r}")
+
     def add_callback(self, onevent: str, callback):
         self.callbacks[onevent].append(callback)
 
@@ -309,6 +349,9 @@ class Trainer:
                 self.loss.backward()
                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_norm_clip)
                 self.grad_norm = float(grad_norm)
+                lr = self._get_lr(self.iter_num)
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = lr
                 self.optimizer.step()
 
                 self.trigger_callbacks('on_batch_end')
@@ -322,7 +365,6 @@ class Trainer:
                     self.tokens_per_sec = 0.0
 
                 # per-step logging
-                lr = self.optimizer.param_groups[0]['lr']
                 self.log_metrics({
                     'train/loss': float(self.loss.item()),
                     'train/lr': float(lr),
