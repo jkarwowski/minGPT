@@ -34,6 +34,8 @@ def get_config():
     # trainer
     C.trainer = Trainer.get_default_config()
     C.trainer.learning_rate = 5e-4 # the model we're using is so small that we can go a bit faster
+    C.trainer.eval_interval = 500
+    C.trainer.eval_batches = 10
 
     return C
 
@@ -50,16 +52,24 @@ class CharDataset(Dataset):
         C.block_size = 128
         return C
 
-    def __init__(self, config, data):
+    def __init__(self, config, data, vocab=None):
         self.config = config
 
-        chars = sorted(list(set(data)))
-        data_size, vocab_size = len(data), len(chars)
-        print('data has %d characters, %d unique.' % (data_size, vocab_size))
+        if vocab is None:
+            chars = sorted(list(set(data)))
+            data_size, vocab_size = len(data), len(chars)
+            print('data has %d characters, %d unique.' % (data_size, vocab_size))
 
-        self.stoi = { ch:i for i,ch in enumerate(chars) }
-        self.itos = { i:ch for i,ch in enumerate(chars) }
-        self.vocab_size = vocab_size
+            self.stoi = { ch:i for i,ch in enumerate(chars) }
+            self.itos = { i:ch for i,ch in enumerate(chars) }
+            self.vocab_size = vocab_size
+        else:
+            self.stoi, self.itos = vocab
+            self.vocab_size = len(self.stoi)
+            data_size = len(data)
+            print('data has %d characters, %d unique.' % (data_size, self.vocab_size))
+            unknown = set(data) - set(self.stoi.keys())
+            assert not unknown, f"validation data contains unseen characters: {sorted(unknown)[:10]}"
         self.data = data
 
     def get_vocab_size(self):
@@ -92,9 +102,15 @@ if __name__ == '__main__':
     setup_logging(config)
     set_seed(config.system.seed)
 
-    # construct the training dataset
+    # construct the training and validation datasets
     text = open('input.txt', 'r').read() # don't worry we won't run out of file handles
-    train_dataset = CharDataset(config.data, text)
+    split = int(0.9 * len(text))
+    train_text = text[:split]
+    val_text = text[split:]
+    chars = sorted(list(set(text)))
+    vocab = ({ ch:i for i,ch in enumerate(chars) }, { i:ch for i,ch in enumerate(chars) })
+    train_dataset = CharDataset(config.data, train_text, vocab=vocab)
+    val_dataset = CharDataset(config.data, val_text, vocab=vocab)
 
     # construct the model
     config.model.vocab_size = train_dataset.get_vocab_size()
@@ -102,7 +118,13 @@ if __name__ == '__main__':
     model = GPT(config.model)
 
     # construct the trainer object
-    trainer = Trainer(config.trainer, model, train_dataset, run_config=config.to_dict())
+    trainer = Trainer(
+        config.trainer,
+        model,
+        train_dataset,
+        val_dataset=val_dataset,
+        run_config=config.to_dict(),
+    )
 
     # iteration callback
     def batch_end_callback(trainer):

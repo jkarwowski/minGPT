@@ -35,6 +35,7 @@ def get_config():
     # trainer
     C.trainer = Trainer.get_default_config()
     C.trainer.learning_rate = 5e-4 # the model we're using is so small that we can go a bit faster
+    C.trainer.eval_interval = 500
 
     return C
 
@@ -139,7 +140,13 @@ if __name__ == '__main__':
     model = GPT(config.model)
 
     # construct the trainer object
-    trainer = Trainer(config.trainer, model, train_dataset, run_config=config.to_dict())
+    trainer = Trainer(
+        config.trainer,
+        model,
+        train_dataset,
+        val_dataset=test_dataset,
+        run_config=config.to_dict(),
+    )
 
     # helper function for the evaluation of a model
     def eval_split(trainer, split, max_batches=None):
