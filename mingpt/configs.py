@@ -140,9 +140,11 @@ def _convert_value(value: Any, target_type: Type[Any]) -> Any:
         }
 
     if origin is Union:
+        if value is None and type(None) in get_args(target_type):
+            return None
         for t in get_args(target_type):
-            if t is type(None) and value is None:
-                return None
+            if t is type(None):
+                continue
             try:
                 return _convert_value(value, t)
             except Exception:
